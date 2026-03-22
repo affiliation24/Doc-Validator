@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Doc Validator</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@400;700&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --accent: #7c6af7;
+    --accent2: #22d3a5;
+    --danger: #f25c6e;
+    --text: #e2e2f0;
+    --muted: #6b6b8a;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Unbounded', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+
+  header {
+    padding: 2rem 3rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  .logo {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  .logo span { color: var(--accent); }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 0.35rem 0.75rem;
+    border-radius: 99px;
+    margin-left: auto;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .status-pill:hover { border-color: var(--accent); color: var(--text); }
+
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+  }
+  .dot.online { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
+  .dot.offline { background: var(--danger); }
+
+  main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  .panel {
+    padding: 2rem 3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .panel:first-child { border-right: 1px solid var(--border); }
+
+  .panel-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  textarea {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.7;
+    padding: 1.25rem;
+    resize: none;
+    outline: none;
+    transition: border-color 0.2s;
+    min-height: 320px;
+  }
+
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--muted); }
+
+  .sample-btn {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+    background: none;
+    border: 1px dashed var(--accent);
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    align-self: flex-start;
+  }
+  .sample-btn:hover { opacity: 1; }
+
+  .run-btn {
+    font-family: var(--display);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--bg);
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    padding: 0.9rem 2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    align-self: flex-start;
+  }
+
+  .run-btn:hover { background: #9a8cf9; transform: translateY(-1px); }
+  .run-btn:active { transform: translateY(0); }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid transparent;
+    border-top-color: var(--bg);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    display: none;
+  }
+  .run-btn.loading .spinner { display: block; }
+  .run-btn.loading .btn-text { opacity: 0.6; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .result-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 320px;
+  }
+
+  .verdict {
+    display: none;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 1px solid;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .verdict.approved {
+    background: rgba(34, 211, 165, 0.08);
+    border-color: rgba(34, 211, 165, 0.3);
+    color: var(--accent2);
+  }
+
+  .verdict.rejected {
+    background: rgba(242, 92, 110, 0.08);
+    border-color: rgba(242, 92, 110, 0.3);
+    color: var(--danger);
+  }
+
+  .verdict-icon { font-size: 1.1rem; }
+
+  .json-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    flex: 1;
+    overflow: auto;
+    position: relative;
+  }
+
+  .json-block pre {
+    padding: 1.25rem;
+    font-size: 0.75rem;
+    line-height: 1.8;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 0.75rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    opacity: 0.5;
+  }
+
+  .empty-icon { font-size: 2rem; opacity: 0.4; }
+
+  .tag { color: var(--accent); }
+  .str { color: #98d1a8; }
+  .num { color: #e8a07c; }
+  .bool-true { color: var(--accent2); }
+  .bool-false { color: var(--danger); }
+  .key { color: #c9a7f5; }
+  .null-val { color: var(--muted); }
+
+  .issues-list {
+    display: none;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .issue-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--text);
+    background: rgba(242, 92, 110, 0.05);
+    border: 1px solid rgba(242, 92, 110, 0.15);
+    border-radius: 6px;
+    padding: 0.6rem 0.9rem;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .issue-dot { color: var(--danger); margin-top: 1px; }
+
+  .approvals-list {
+    display: none;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .approval-tag {
+    font-size: 0.7rem;
+    background: rgba(124, 106, 247, 0.1);
+    border: 1px solid rgba(124, 106, 247, 0.25);
+    color: var(--accent);
+    padding: 0.3rem 0.75rem;
+    border-radius: 99px;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .error-msg {
+    display: none;
+    background: rgba(242, 92, 110, 0.08);
+    border: 1px solid rgba(242, 92, 110, 0.3);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    font-size: 0.75rem;
+    color: var(--danger);
+    line-height: 1.6;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .section-title {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.25rem;
+  }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Doc<span>Validator</span></div>
+  <div class="status-pill" onclick="checkHealth()">
+    <div class="dot" id="dot"></div>
+    <span id="status-text">проверить сервис</span>
+  </div>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="panel-label">Входной документ</div>
+
+    <textarea id="doc-input" placeholder="Вставь текст счёта, договора или акта..."></textarea>
+
+    <button class="sample-btn" onclick="loadSample()">↳ загрузить тестовый счёт</button>
+
+    <button class="run-btn" id="run-btn" onclick="processDoc()">
+      <div class="spinner"></div>
+      <span class="btn-text">Проверить документ</span>
+    </button>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">Результат проверки</div>
+
+    <div class="result-area">
+
+      <div class="verdict" id="verdict">
+        <span class="verdict-icon" id="verdict-icon"></span>
+        <span id="verdict-text"></span>
+      </div>
+
+      <div id="error-msg" class="error-msg"></div>
+
+      <div id="issues-section" style="display:none">
+        <div class="section-title">Нарушения</div>
+        <div class="issues-list" id="issues-list"></div>
+      </div>
+
+      <div id="approvals-section" style="display:none">
+        <div class="section-title">Нужны согласования</div>
+        <div class="approvals-list" id="approvals-list"></div>
+      </div>
+
+      <div id="empty-state" class="empty-state">
+        <div class="empty-icon">⬡</div>
+        <span>результат появится здесь</span>
+      </div>
+
+      <div id="json-section" style="display:none; flex-direction:column; gap:1rem; flex:1;">
+        <div class="section-title">Полный ответ</div>
+        <div class="json-block" id="json-block">
+          <pre id="json-output"></pre>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<script>
+const API_URL = "http://localhost:8000";
+
+const SAMPLE = `СЧЁТ-ФАКТУРА №СФ-2024-0891 от 15.03.2024
+
+Поставщик: ООО "ТехноСервис"
+ИНН: 7712345678
+
+Позиции:
+1. Лицензия MS Office 365 — 10 шт. × 4 500 руб. = 45 000 руб.
+2. Техподдержка (годовая) — 1 шт. × 12 000 руб. = 12 000 руб.
+
+Итого без НДС: 57 000 руб.
+НДС 20%: 11 400 руб.
+ИТОГО: 68 400 руб.`;
+
+function loadSample() {
+  document.getElementById("doc-input").value = SAMPLE;
+}
+
+async function checkHealth() {
+  const dot = document.getElementById("dot");
+  const statusText = document.getElementById("status-text");
+  try {
+    const r = await fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      dot.className = "dot online";
+      statusText.textContent = "сервис работает";
+    } else {
+      throw new Error();
+    }
+  } catch {
+    dot.className = "dot offline";
+    statusText.textContent = "сервис недоступен";
+  }
+}
+
+function syntaxHighlight(obj) {
+  const json = JSON.stringify(obj, null, 2);
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+    if (/^"/.test(match)) {
+      if (/:$/.test(match)) return `<span class="key">${match}</span>`;
+      return `<span class="str">${match}</span>`;
+    }
+    if (/true/.test(match)) return `<span class="bool-true">${match}</span>`;
+    if (/false/.test(match)) return `<span class="bool-false">${match}</span>`;
+    if (/null/.test(match)) return `<span class="null-val">${match}</span>`;
+    return `<span class="num">${match}</span>`;
+  });
+}
+
+function reset() {
+  document.getElementById("verdict").style.display = "none";
+  document.getElementById("error-msg").style.display = "none";
+  document.getElementById("issues-section").style.display = "none";
+  document.getElementById("approvals-section").style.display = "none";
+  document.getElementById("json-section").style.display = "none";
+  document.getElementById("empty-state").style.display = "flex";
+  document.getElementById("issues-list").innerHTML = "";
+  document.getElementById("approvals-list").innerHTML = "";
+}
+
+async function processDoc() {
+  const text = document.getElementById("doc-input").value.trim();
+  if (!text) {
+    document.getElementById("doc-input").focus();
+    return;
+  }
+
+  reset();
+
+  const btn = document.getElementById("run-btn");
+  btn.disabled = true;
+  btn.classList.add("loading");
+  btn.querySelector(".btn-text").textContent = "Обрабатываю...";
+
+  try {
+    const r = await fetch(`${API_URL}/process`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+
+    const data = await r.json();
+
+    document.getElementById("empty-state").style.display = "none";
+
+    if (!r.ok) {
+      const errMsg = document.getElementById("error-msg");
+      errMsg.style.display = "block";
+      errMsg.textContent = `Ошибка ${r.status}: ${data.detail || JSON.stringify(data)}`;
+      return;
+    }
+
+    const verdict = document.getElementById("verdict");
+    const approved = data.validation?.approved;
+
+    verdict.style.display = "flex";
+    verdict.className = `verdict ${approved ? "approved" : "rejected"}`;
+    document.getElementById("verdict-icon").textContent = approved ? "✓" : "✕";
+    document.getElementById("verdict-text").textContent = approved
+      ? "Документ одобрен — можно проводить"
+      : `Документ отклонён — ${data.validation?.comment || ""}`;
+
+    const issues = data.validation?.issues || [];
+    if (issues.length > 0) {
+      document.getElementById("issues-section").style.display = "block";
+      const list = document.getElementById("issues-list");
+      list.style.display = "flex";
+      issues.forEach(issue => {
+        list.innerHTML += `<div class="issue-item"><span class="issue-dot">▸</span>${issue}</div>`;
+      });
+    }
+
+    const approvals = data.validation?.approvals_needed || [];
+    if (approvals.length > 0) {
+      document.getElementById("approvals-section").style.display = "block";
+      const list = document.getElementById("approvals-list");
+      list.style.display = "flex";
+      approvals.forEach(a => {
+        list.innerHTML += `<div class="approval-tag">${a}</div>`;
+      });
+    }
+
+    document.getElementById("json-section").style.display = "flex";
+    document.getElementById("json-output").innerHTML = syntaxHighlight(data);
+
+  } catch (err) {
+    document.getElementById("empty-state").style.display = "none";
+    const errMsg = document.getElementById("error-msg");
+    errMsg.style.display = "block";
+    errMsg.textContent = "Не удалось подключиться к сервису. Убедись что запущен: uvicorn main:app --reload --port 8000";
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("loading");
+    btn.querySelector(".btn-text").textContent = "Проверить документ";
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") processDoc();
+});
+
+checkHealth();
+</script>
+</body>
+</html>
