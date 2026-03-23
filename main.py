@@ -1,5 +1,7 @@
 import json
 import os
+import uvicorn
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -10,7 +12,7 @@ from extractor import extract
 from validator import load_rules, validate
 from ocr import extract_text_from_file
 from history.history import add_record, get_history, get_stats   
-import uvicorn
+
 
 
 @asynccontextmanager
@@ -56,7 +58,7 @@ def run_pipeline(text: str, source: str = "text") -> ProcessResponse:
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Ошибка валидации: {e}")
 
-    add_record(extracted, validation, source=source) 
+    add_record(extracted, validation, source=source)
 
     return ProcessResponse(
         status="APPROVED" if validation.get("approved") else "REJECTED",

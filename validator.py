@@ -5,59 +5,167 @@ from groq import Groq
 from dotenv import load_dotenv
 import chromadb
 from sentence_transformers import SentenceTransformer
-from extractor import extract
 
 load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 VALIDATE_MODEL = "llama-3.3-70b-versatile"
+RULES_FILE = "rules.txt"
 
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 db = chromadb.PersistentClient(path="./rules_db")
 rules_col = db.get_or_create_collection("rules")
 
-RULES = [
-    "Закупка любого ПО требует согласования IT-отдела.",
-    "Счета свыше 50 000 руб. требуют визы финансового директора.",
-    "Новый поставщик должен пройти проверку службы безопасности.",
-    "Оплата производится в течение 30 дней с даты счёта.",
-    "Закупки оборудования свыше 500 000 руб. выносятся на тендер.",
-    "Счета в иностранной валюте требуют курс ЦБ на дату документа.",
-    "Договоры свыше 1 000 000 руб. требуют согласования юридического отдела.",
-]
-
 SYSTEM_PROMPT = """
-You are a compliance officer at a company.
+You are a strict compliance officer at a government ministry.
 
-TASK: Verify the document against the company regulations provided.
+Your task is to verify financial and administrative documents against ministry regulations.
+
+---
+
+SUPPORTED DOCUMENT TYPES:
+- invoice          (счёт, счёт-фактура)
+- contract         (государственный контракт, договор)
+- payment_order    (платёжное поручение)
+- act              (акт выполненных работ, акт приёмки)
+- approval         (служебная записка, согласование, докладная)
+- other
+
+---
+
+VERIFICATION DEPTH — check ALL fields if present:
+- Document number and date (presence, valid format)
+- Supplier/contractor name and INN:
+    - Legal entity: exactly 10 digits
+    - Individual: exactly 12 digits
+- Total amount and currency (RUB/USD/EUR)
+- VAT: 20% standard rate, 0% only for legally exempt categories
+- Payment terms: must not exceed 30 calendar days
+- Tender: required for purchases over 500,000 RUB
+- IT approval: required for any software or license purchase
+- Legal approval: required for contracts over 1,000,000 RUB
+- CFO approval: required for invoices over 50,000 RUB
+- Security check: required for any new supplier not in approved registry
+- Foreign currency: CBR exchange rate on document date must be present
+
+---
+
+SEVERITY LEVELS:
+- "ошибка" — document CANNOT be approved, processing is blocked
+  Use when: missing required fields, INN invalid, limits exceeded without approval, forged data suspected
+- "предупреждение" — document CAN proceed but requires an authorising signature
+  Use when: borderline amounts, optional fields missing, supplier not yet verified
+
+---
+
+PRIORITY LEVELS:
+- "БЛОКИРУЮЩИЙ"        — stops processing entirely, escalate immediately
+- "ТРЕБУЕТ_ВНИМАНИЯ"   — requires signature or correction before approval
+- "ИНФОРМАЦИОННЫЙ"     — logged for audit, does not block processing
+
+---
+
+UNCERTAINTY HANDLING — STRICT RULE:
+If you are not 100% confident about any field:
+- Do NOT guess, do NOT skip, do NOT approve
+- Set approved = false
+- Add the field to "uncertain_fields" with:
+    - what exactly is missing
+    - why you are uncertain
+    - what document or data would resolve the doubt
+- Example: "ИНН содержит 9 символов вместо 10 — документ может быть повреждён или данные введены с ошибкой"
+
+---
 
 OUTPUT RULES:
-- Return ONLY valid JSON, no explanations, no markdown, no ```
+- Return ONLY valid JSON — no markdown, no text outside JSON
 - All string values must be in Russian
-- Be strict: if a regulation applies — flag it as an issue
+- "human_comment" — one or two sentences in plain Russian for a non-technical ministry employee
+
+---
 
 RESPONSE SCHEMA:
 {
   "approved": true or false,
-  "issues": ["list of violations found"],
-  "approvals_needed": ["list of people/departments who must sign"],
-  "comment": "brief conclusion in one sentence"
+  "doc_type": "invoice | contract | payment_order | act | approval | other",
+  "severity": "ошибка | предупреждение | ок",
+  "issues": [
+    {
+      "rule": "название нарушенного регламента",
+      "description": "что именно нарушено и почему",
+      "severity": "ошибка | предупреждение",
+      "priority": "БЛОКИРУЮЩИЙ | ТРЕБУЕТ_ВНИМАНИЯ | ИНФОРМАЦИОННЫЙ"
+    }
+  ],
+  "uncertain_fields": [
+    {
+      "field": "название поля",
+      "reason": "почему модель сомневается",
+      "missing_data": "какие именно данные нужны для проверки"
+    }
+  ],
+  "approvals_needed": ["список отделов или должностей"],
+  "rules_checked": ["список регламентов которые были применены"],
+  "human_comment": "краткий вывод на русском языке для сотрудника министерства"
 }
-
-If no violations found — return approved: true and empty lists.
 """
 
+
+def read_rules_from_file(path: str) -> list[str]:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Файл правил не найден: {path}")
+
+    rules = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):  # пропускаем комментарии и пустые строки
+                rules.append(line)
+    return rules
+
+
+def get_rules_hash(rules: list[str]) -> str:
+    import hashlib
+    content = "\n".join(rules)
+    return hashlib.md5(content.encode()).hexdigest()
+
+
 def load_rules():
-    if rules_col.count() == 0:
-        rules_col.add(
-            documents=RULES,
-            embeddings=embedder.encode(RULES).tolist(),
-            ids=[f"rule_{i}" for i in range(len(RULES))]
-        )
-        print(f"Загружено правил: {len(RULES)}")
-    else:
-        print(f"Правила уже загружены: {rules_col.count()} шт.")
+    rules = read_rules_from_file(RULES_FILE)
+    current_hash = get_rules_hash(rules)
+
+    stored_hash = None
+    try:
+        meta = rules_col.get(ids=["__meta__"])
+        if meta["documents"]:
+            stored_hash = meta["documents"][0]
+    except Exception:
+        pass
+
+    if stored_hash == current_hash:
+        print(f"Правила актуальны: {rules_col.count() - 1} шт.")
+        return
+
+    print("Обновляю базу правил...")
+    existing = rules_col.get()
+    rule_ids = [i for i in existing["ids"] if i != "__meta__"]
+    if rule_ids:
+        rules_col.delete(ids=rule_ids)
+
+    rules_col.upsert(
+        documents=[current_hash],
+        embeddings=[[0.0] * 384],
+        ids=["__meta__"]
+    )
+
+    rules_col.add(
+        documents=rules,
+        embeddings=embedder.encode(rules).tolist(),
+        ids=[f"rule_{i}" for i in range(len(rules))]
+    )
+    print(f"Загружено правил: {len(rules)}")
+
 
 def find_relevant_rules(extracted: dict, top_k: int = 3) -> list[str]:
     query = (
@@ -67,14 +175,17 @@ def find_relevant_rules(extracted: dict, top_k: int = 3) -> list[str]:
     )
     results = rules_col.query(
         query_embeddings=embedder.encode([query]).tolist(),
-        n_results=top_k
+        n_results=top_k,
+        where={"$ne": {"ids": "__meta__"}}
     )
     return results["documents"][0]
+
 
 def clean_json_response(raw: str) -> str:
     raw = raw.strip()
     raw = re.sub(r"```json|```", "", raw).strip()
     return raw
+
 
 def validate(extracted: dict) -> dict:
     relevant_rules = find_relevant_rules(extracted)
@@ -83,10 +194,7 @@ def validate(extracted: dict) -> dict:
         model=VALIDATE_MODEL,
         temperature=0,
         messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
+            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": f"""
@@ -111,31 +219,3 @@ Applicable regulations:
         return result
     except json.JSONDecodeError as e:
         raise ValueError(f"Модель вернула невалидный JSON: {e}\nОтвет: {cleaned}")
-
-
-if __name__ == "__main__":
-
-    load_rules()
-
-    sample = """
-    СЧЁТ-ФАКТУРА №СФ-2024-0891 от 15.03.2024
-
-    Поставщик: ООО "ТехноСервис"
-    ИНН: 7712345678
-
-    Позиции:
-    1. Лицензия MS Office 365 — 10 шт. * 4 500 руб. = 45 000 руб.
-    2. Техподдержка (годовая) — 1 шт.  * 12 000 руб. = 12 000 руб.
-
-    Итого без НДС: 57 000 руб.
-    НДС 20%: 11 400 руб.
-    ИТОГО: 68 400 руб.
-    """
-
-    extracted = extract(sample)
-    print("Извлечённые данные:")
-    print(json.dumps(extracted, ensure_ascii=False, indent=2))
-
-    print("\nРезультат валидации:")
-    result = validate(extracted)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
