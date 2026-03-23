@@ -5,6 +5,7 @@ from groq import Groq
 from dotenv import load_dotenv
 import chromadb
 from sentence_transformers import SentenceTransformer
+from extractor import extract
 
 load_dotenv()
 
@@ -113,7 +114,6 @@ Applicable regulations:
 
 
 if __name__ == "__main__":
-    from extractor import extract
 
     load_rules()
 
