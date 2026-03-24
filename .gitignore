@@ -6,6 +6,23 @@ __pycache__/
 # C extensions
 *.so
 
+
+# Semple files
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.odt
+*.ods
+*.odp
+*.odg
+*.odf
+*.txt
+*.md
+
 # Distribution / packaging
 .Python
 build/
@@ -206,3 +223,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Сonfidential folders
+history/
+rules_db/
