@@ -120,7 +120,7 @@ def read_rules_from_file(path: str) -> list[str]:
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line and not line.startswith("#"):  # пропускаем комментарии и пустые строки
+            if line and not line.startswith("#"):
                 rules.append(line)
     return rules
 
@@ -167,6 +167,44 @@ def load_rules():
     print(f"Загружено правил: {len(rules)}")
 
 
+def load_rules():
+    rules = read_rules_from_file(RULES_FILE)
+    current_hash = get_rules_hash(rules)
+
+    stored_hash = None
+    try:
+        meta = rules_col.get(ids=["__meta__"])
+        if meta["documents"]:
+            stored_hash = meta["documents"][0]
+    except Exception:
+        pass
+
+    if stored_hash == current_hash:
+        print(f"Правила актуальны: {rules_col.count() - 1} шт.")
+        return
+
+    print("Обновляю базу правил...")
+    existing = rules_col.get()
+    rule_ids = [i for i in existing["ids"] if i != "__meta__"]
+    if rule_ids:
+        rules_col.delete(ids=rule_ids)
+
+    rules_col.upsert(
+        documents=[current_hash],
+        embeddings=[[0.0] * 384],
+        ids=["__meta__"],
+        metadatas=[{"type": "meta"}]
+    )
+
+    rules_col.add(
+        documents=rules,
+        embeddings=embedder.encode(rules).tolist(),
+        ids=[f"rule_{i}" for i in range(len(rules))],
+        metadatas=[{"type": "rule"} for _ in rules]
+    )
+    print(f"Загружено правил: {len(rules)}")
+
+
 def find_relevant_rules(extracted: dict, top_k: int = 3) -> list[str]:
     query = (
         f"{extracted.get('category', '')} "
@@ -176,7 +214,7 @@ def find_relevant_rules(extracted: dict, top_k: int = 3) -> list[str]:
     results = rules_col.query(
         query_embeddings=embedder.encode([query]).tolist(),
         n_results=top_k,
-        where={"$ne": {"ids": "__meta__"}}
+        where={"type": {"$eq": "rule"}}
     )
     return results["documents"][0]
 
