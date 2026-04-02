@@ -20,7 +20,18 @@ rules_col = db.get_or_create_collection("rules")
 SYSTEM_PROMPT = """
 You are a strict compliance officer at a government ministry.
 
+CRITICAL RULES — apply these unconditionally before anything else:
+- ANY software, license, SaaS, or IT subscription → IT department approval REQUIRED, mark as "ошибка"
+- ANY invoice or payment over 50,000 RUB → CFO (финансовый директор) approval REQUIRED
+- ANY contract over 1,000,000 RUB → Legal department (юридический отдел) approval REQUIRED
+- ANY purchase over 500,000 RUB → tender (тендер) REQUIRED
+- ANY foreign currency (USD, EUR) → CBR exchange rate REQUIRED, mark as "ошибка"
+- ANY new supplier not in registry → security check REQUIRED, mark as "предупреждение"
+
+These rules are absolute. They override everything else.
+
 Your task is to verify financial and administrative documents against ministry regulations.
+
 
 ---
 
@@ -205,18 +216,34 @@ def load_rules():
     print(f"Загружено правил: {len(rules)}")
 
 
-def find_relevant_rules(extracted: dict, top_k: int = 3) -> list[str]:
-    query = (
-        f"{extracted.get('category', '')} "
-        f"сумма {extracted.get('total', 0)} {extracted.get('currency', 'RUB')} "
-        f"поставщик {extracted.get('supplier_name', '')}"
-    )
-    results = rules_col.query(
-        query_embeddings=embedder.encode([query]).tolist(),
-        n_results=top_k,
-        where={"type": {"$eq": "rule"}}
-    )
-    return results["documents"][0]
+def find_relevant_rules(extracted: dict, top_k: int = 5) -> list[str]:
+    category = extracted.get("category", "")
+    total = extracted.get("total", 0)
+    currency = extracted.get("currency", "RUB")
+
+    queries = [
+        f"закупка {category} лицензия программное обеспечение согласование",
+        f"счёт {total} рублей превышает лимит виза подпись",
+        f"валюта {currency} курс поставщик новый проверка",
+    ]
+
+    seen = set()
+    all_rules = []
+
+    for query in queries:
+        results = rules_col.query(
+            query_embeddings=embedder.encode([query]).tolist(),
+            n_results=3,
+            where={"type": {"$eq": "rule"}}
+        )
+        for doc in results["documents"][0]:
+            if doc not in seen:
+                seen.add(doc)
+                all_rules.append(doc)
+        if len(all_rules) >= top_k:
+            break
+
+    return all_rules[:top_k]
 
 
 def clean_json_response(raw: str) -> str:
@@ -225,8 +252,35 @@ def clean_json_response(raw: str) -> str:
     return raw
 
 
+def build_mandatory_checks(extracted: dict) -> list[str]:
+    checks = []
+    total = float(extracted.get("total") or 0)
+    category = extracted.get("category", "")
+    currency = extracted.get("currency", "RUB")
+    doc_type = extracted.get("doc_type", "")
+
+    if category == "ПО":
+        checks.append("ОБЯЗАТЕЛЬНО: Категория 'ПО' — требуется согласование IT-отдела. Это блокирующее нарушение.")
+    if total > 50000:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Сумма {total} руб. превышает 50 000 — требуется виза финансового директора.")
+    if total > 500000:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Сумма {total} руб. превышает 500 000 — требуется тендер.")
+    if doc_type == "contract" and total > 1000000:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Договор на {total} руб. превышает 1 000 000 — требуется согласование юридического отдела.")
+    if currency in ("USD", "EUR"):
+        checks.append(f"ОБЯЗАТЕЛЬНО: Валюта {currency} — требуется курс ЦБ на дату документа.")
+
+    return checks
+
+
 def validate(extracted: dict) -> dict:
     relevant_rules = find_relevant_rules(extracted)
+    mandatory_checks = build_mandatory_checks(extracted)
+
+    mandatory_section = ""
+    if mandatory_checks:
+        mandatory_section = "\n\nMANDATORY VIOLATIONS DETECTED (must appear in issues):\n" + \
+            "\n".join(f"- {c}" for c in mandatory_checks)
 
     response = client.chat.completions.create(
         model=VALIDATE_MODEL,
@@ -243,6 +297,7 @@ Document data:
 
 Applicable regulations:
 {chr(10).join(f"- {r}" for r in relevant_rules)}
+{mandatory_section}
 """
             }
         ]

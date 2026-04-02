@@ -36,7 +36,7 @@ IMPORTANT: Software technical support (годовая техподдержка �
 SCHEMA = {
     "number": "номер документа",
     "date": "дата в формате YYYY-MM-DD",
-    "doc_type": "счёт|договор|акт|накладная|прочее",
+    "doc_type": "invoice|contract|act|payment_order|approval|other",
     "supplier_name": "название поставщика",
     "supplier_inn": "ИНН поставщика",
     "total": "итоговая сумма числом",
@@ -54,14 +54,8 @@ def extract(text: str) -> dict:
         model=EXTRACT_MODEL,
         temperature=0,
         messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": f"Извлеки данные по схеме:\n{json.dumps(SCHEMA, ensure_ascii=False, indent=2)}\n\nДокумент:\n{text}"
-            }
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Извлеки данные по схеме:\n{json.dumps(SCHEMA, ensure_ascii=False, indent=2)}\n\nДокумент:\n{text}"}
         ]
     )
 
@@ -69,7 +63,12 @@ def extract(text: str) -> dict:
     cleaned = clean_json_response(raw)
 
     try:
-        return json.loads(cleaned)
+        result = json.loads(cleaned)
+        if result.get("total") is not None:
+            result["total"] = float(
+                str(result["total"]).replace(" ", "").replace(",", ".")
+            )
+        return result
     except json.JSONDecodeError as e:
         raise ValueError(f"Модель вернула невалидный JSON: {e}\nОтвет модели: {cleaned}")
 
