@@ -251,6 +251,59 @@ def clean_json_response(raw: str) -> str:
     raw = re.sub(r"```json|```", "", raw).strip()
     return raw
 
+def validate_inn(inn: str) -> tuple[bool, str]:
+    if not inn:
+        return False, "ИНН отсутствует"
+    inn = str(inn).strip()
+    if not inn.isdigit():
+        return False, f"ИНН содержит нецифровые символы: {inn}"
+    if len(set(inn)) == 1:
+        return False, f"ИНН состоит из одинаковых цифр: {inn}"
+    if len(inn) == 10:
+        return True, ""
+    if len(inn) == 12:
+        return True, ""
+    return False, f"ИНН содержит {len(inn)} цифр вместо 10 (юр. лицо) или 12 (ИП)"
+
+
+def validate_kpp(kpp: str) -> tuple[bool, str]:
+    if not kpp:
+        return True, ""
+    kpp = str(kpp).strip()
+    if not kpp.isdigit():
+        return False, f"КПП содержит нецифровые символы: {kpp}"
+    if len(kpp) != 9:
+        return False, f"КПП содержит {len(kpp)} цифр вместо 9"
+    if len(set(kpp)) == 1:
+        return False, f"КПП состоит из одинаковых цифр: {kpp}"
+    return True, ""
+
+
+def validate_bik(bik: str) -> tuple[bool, str]:
+    if not bik:
+        return True, ""
+    bik = str(bik).strip()
+    if not bik.isdigit():
+        return False, f"БИК содержит нецифровые символы: {bik}"
+    if len(bik) != 9:
+        return False, f"БИК содержит {len(bik)} цифр вместо 9"
+    if not bik.startswith("04"):
+        return False, f"БИК не начинается с '04' — возможно, некорректный российский БИК: {bik}"
+    return True, ""
+
+
+def validate_account(account: str) -> tuple[bool, str]:
+    if not account:
+        return True, ""
+    account = str(account).strip()
+    if not account.isdigit():
+        return False, f"Номер счёта содержит нецифровые символы: {account}"
+    if len(account) != 20:
+        return False, f"Номер счёта содержит {len(account)} цифр вместо 20"
+    if len(set(account)) == 1:
+        return False, f"Номер счёта состоит из одинаковых цифр: {account}"
+    return True, ""
+
 
 def build_mandatory_checks(extracted: dict) -> list[str]:
     checks = []
@@ -263,6 +316,8 @@ def build_mandatory_checks(extracted: dict) -> list[str]:
         checks.append("ОБЯЗАТЕЛЬНО: Категория 'ПО' — требуется согласование IT-отдела. Это блокирующее нарушение.")
     if total > 50000:
         checks.append(f"ОБЯЗАТЕЛЬНО: Сумма {total} руб. превышает 50 000 — требуется виза финансового директора.")
+    if total > 150000:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Сумма {total} руб. превышает 150 000 — требуется виза руководителя подразделения.")
     if total > 500000:
         checks.append(f"ОБЯЗАТЕЛЬНО: Сумма {total} руб. превышает 500 000 — требуется тендер.")
     if doc_type == "contract" and total > 1000000:
@@ -270,8 +325,38 @@ def build_mandatory_checks(extracted: dict) -> list[str]:
     if currency in ("USD", "EUR"):
         checks.append(f"ОБЯЗАТЕЛЬНО: Валюта {currency} — требуется курс ЦБ на дату документа.")
 
-    return checks
+    inn = extracted.get("supplier_inn", "")
+    inn_ok, inn_err = validate_inn(inn)
+    if not inn_ok:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Некорректный ИНН поставщика — {inn_err}.")
 
+    kpp = extracted.get("supplier_kpp", "")
+    kpp_ok, kpp_err = validate_kpp(kpp)
+    if not kpp_ok:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Некорректный КПП поставщика — {kpp_err}.")
+
+    bik = extracted.get("bank_bik", "")
+    bik_ok, bik_err = validate_bik(bik)
+    if not bik_ok:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Некорректный БИК банка — {bik_err}.")
+
+    account = extracted.get("bank_account", "")
+    acc_ok, acc_err = validate_account(account)
+    if not acc_ok:
+        checks.append(f"ОБЯЗАТЕЛЬНО: Некорректный расчётный счёт — {acc_err}.")
+
+    payer_inn = extracted.get("payer_inn", "")
+    if payer_inn and inn and payer_inn == inn:
+        checks.append("ОБЯЗАТЕЛЬНО: ИНН плательщика и получателя совпадают — возможна ошибка или мошенничество.")
+
+    amount_words = extracted.get("total_words", "")
+    amount_digits = extracted.get("total")
+    if amount_words and amount_digits:
+        checks.append(
+            f"ПРОВЕРЬ: Сумма цифрами {amount_digits} — убедись что сумма прописью '{amount_words}' соответствует ей точно."
+        )
+
+    return checks
 
 def validate(extracted: dict) -> dict:
     relevant_rules = find_relevant_rules(extracted)

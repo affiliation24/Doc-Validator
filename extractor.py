@@ -39,7 +39,12 @@ SCHEMA = {
     "doc_type": "invoice|contract|act|payment_order|approval|other",
     "supplier_name": "название поставщика",
     "supplier_inn": "ИНН поставщика",
+    "supplier_kpp": "КПП поставщика (9 цифр, только для юр. лиц)",
+    "payer_inn": "ИНН плательщика если указан",
+    "bank_bik": "БИК банка получателя (9 цифр)",
+    "bank_account": "расчётный счёт получателя (20 цифр)",
     "total": "итоговая сумма числом",
+    "total_words": "сумма прописью если указана в документе",
     "currency": "валюта: RUB|USD|EUR",
     "category": "категория: ПО|оборудование|услуги|прочее"
 }
