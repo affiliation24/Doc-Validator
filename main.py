@@ -1,5 +1,3 @@
-import json
-import os
 import uvicorn
 
 from contextlib import asynccontextmanager
